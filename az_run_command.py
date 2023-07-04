@@ -3,7 +3,7 @@
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.resource import SubscriptionClient
-import time
+import csv
 
 # Class to manage Azure Subscriptions and VMs
 class AzureRunCommand:
@@ -53,10 +53,16 @@ class AzureRunCommand:
                         "id": vm.id,
                         "resourceGroup": vm.id.split('/')[4],
                         "location": vm.location, 
-                        "name": vm.name, 
-                        "tags": vm.tags})
-                    
-        print("\r\nVMs found: " + str(totalVms))
+                        "name": vm.name,
+                        "ostype": vm.storage_profile.os_disk.os_type, 
+                        "osversion": vm.storage_profile.image_reference.version,
+                        "tags": vm.tags,
+                        "licensed": None,
+                        "kmsserver": None,
+                        "kmsip": None,
+                        "output": None,
+                        "error": None})                   
+        print("\r\n Total VMs Found: " + str(totalVms))
 
     def get_all_subscriptions(self):
         print("Getting all subscriptions")
@@ -93,8 +99,6 @@ class AzureRunCommand:
         if not isinstance(command, list):
             command = [command]
 
-        pollers = []
-
         # Get credentials
         credential = DefaultAzureCredential()
 
@@ -102,23 +106,68 @@ class AzureRunCommand:
         if vmid is None:
             # Run against all VMs in each subscription
             for sub in self.subscriptions:
+                print("\r\nRunning Commands on VMs in Subscription: " + sub["name"])
                 for vm in sub["vm"]:
-                    print(vm["resourceGroup"])
-                    compute_client = ComputeManagementClient(credential, sub["id"])
-                    parameters = {
-                        'command_id': 'RunPowerShellScript',
-                        'script': command,
-                    }
-                    print("Launching Command on " + vm["name"])
-                    poller = compute_client.virtual_machines.begin_run_command(vm["resourceGroup"], vm["name"], parameters) 
-                    pollers.append(poller)
-        
+                    try:
+                        compute_client = ComputeManagementClient(credential, sub["id"])
+                        parameters = {
+                            'command_id': 'RunPowerShellScript',
+                            'script': command,
+                        }
+                        poller = compute_client.virtual_machines.begin_run_command(vm["resourceGroup"], vm["name"], parameters) 
+                        print(".", end="")
+                        result = poller.result()
+                        vm["output"] = result.value[0].message
+                        for value in result.value[0].message.split("\n"):
+                            if len(value) > 0:
+                                temp = value.split(":")
+                                if temp[0].strip() == "License Status":
+                                    vm["licensed"] = temp[1].strip()
+                                elif temp[0].strip() == "Registered KMS machine name":
+                                    vm["kmsserver"] = temp[1].strip()
+                                elif temp[0].strip() == "KMS machine IP address":
+                                    vm["kmsip"] = temp[1].strip()
+                    except Exception as e:
+                        print("X", end="")
+
+    
+    def export_csv(self, filename):
+        # Export subscript,vm,output data to csv file
+        # Write the header for the csv file
+        csvfile = open(filename, 'w', newline='')
+        fieldnames = ['Subscription', 'ResourceGroup', 'Location', 'VM', 'OS', 'os version', 'Licensed', 'KMSServer', 'KMSIP', 'Output']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        # Loop through all subs and VMs and export to CSV
+        for sub in self.subscriptions:           
+            for vm in sub["vm"]:
+                writer.writerow({
+                    'Subscription': sub["name"],
+                    'ResourceGroup': vm["resourceGroup"],
+                    'Location': vm["location"],
+                    'VM': vm["name"],
+                    'OS': vm["ostype"],
+                    'os version': vm["osversion"],
+                    'Licensed': vm["licensed"],
+                    'KMSServer': vm["kmsserver"],
+                    'KMSIP': vm["kmsip"]})
+        csvfile.close()
+        print("\r\nExported to CSV file: " + filename)
+                    
+                                          
+
 
 # Create AzureSubscription object
-# Parameters: subFilter, vmFilter (Tag names)
-azacct = AzureRunCommand([{"Type":"Domain","Support": "Yes"}], [{"Supported":"Yes","Environment": "Prod"}], ["Windows"])
-azacct.run_command("Windows", 'cscript C:\windows\system32\slmgr.vbs /dlv | select-string -pattern "License Status"')
+# Parameters: subFilter, vmFilter (Tag names), OS Type
+azacct = AzureRunCommand([{"Type":"Domain"}], [{"Supported":"Yes"}], ["Windows"])
 
+azacct.run_command(
+    "Windows",
+    [
+        'cscript C:\windows\system32\slmgr.vbs /dlv | select-string -pattern "License Status"',
+        'cscript C:\windows\system32\slmgr.vbs /dlv | select-string -pattern "Registered KMS machine name"',
+        'cscript C:\windows\system32\slmgr.vbs /dlv | select-string -pattern "KMS machine IP address"'
+        ])
 
-# az vm run-command create --name "myRunCommand" --vm-name "My-vm-test-01" --resource-group "RG-DIV-PROD-DEPT-USE1" --script "Write-Host Hello World!"
-# az vm run-command show --name "myRunCommand" --vm-name "My-vm-test-01" --resource-group "RG-DIV-PROD-DEPT-USE1" --expand instanceView
+azacct.export_csv("vmlist.csv")
