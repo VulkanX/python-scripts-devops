@@ -97,7 +97,7 @@ class AzureRunCommand:
     def get_all_subscriptions(self):
         print("Getting all subscriptions")
 
-        # Python SDK has issues retreiving tags, using direct Graph query instead
+        # Python SDK has issues retreiving tags consistently, using az cli Graph query instead to get all subscriptions
         azclioutput = json.loads(subprocess.check_output("az graph query -q \"resourcecontainers | where type == 'microsoft.resources/subscriptions' | project id, name, subscriptionId, properties.state, tags\"", shell=True).decode('utf-8'))
         subObjects = list(azclioutput["data"])
         subscriptions = []
