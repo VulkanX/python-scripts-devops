@@ -63,7 +63,6 @@ class AzureRunCommand:
                                     addVm = False
                 # Check OS Type
                 if vmos is not None:
-                    print(f"OS filter: {self.vmOS}")
                     if vmos not in self.vmOS:
                         addVm = False
 
@@ -74,7 +73,7 @@ class AzureRunCommand:
 
                 if addVm:
                     totalVms += 1
-                    print(".", end="")
+                    print(".", end="", flush=True)
                     sub["vm"].append({
                         "id": vm.id,
                         "resourceGroup": vm.id.split('/')[4],
@@ -91,7 +90,7 @@ class AzureRunCommand:
                         "output": None,
                         "error": None})
                 else:
-                    print("x", end="")
+                    print("x", end="", flush=True)
         print("\r\n Total VMs Found: " + str(totalVms))
 
     def get_all_subscriptions(self):
@@ -159,7 +158,6 @@ class AzureRunCommand:
                                 elif temp[0].strip() == "KMS machine IP address":
                                     vm["kmsip"] = temp[1].strip()
                                 elif temp[0].strip() == "KMS_Reachable":
-                                    print("KMS Reachable Value Found")
                                     vm["kmsreachable"] = temp[1].strip()
                     except Exception as e:
                         print("X", end="", flush=True)
@@ -196,8 +194,8 @@ class AzureRunCommand:
 
 # Create AzureSubscription object
 # Parameters: subFilter, vmFilter (Tag names), OS, OS Type, OS Version
-azacct = AzureRunCommand(None, None, ["Windows"], ["WindowsServer"])
 
+azacct = AzureRunCommand(None, None, ["Windows"], ["WindowsServer"])
 azacct.run_command(
     "Windows",
     [
