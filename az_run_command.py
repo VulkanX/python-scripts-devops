@@ -4,15 +4,19 @@ from azure.identity import DefaultAzureCredential
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.resource import SubscriptionClient
 import csv
+import json
+import subprocess
 
 # Class to manage Azure Subscriptions and VMs
 class AzureRunCommand:
 
-    def __init__(self, subFilter, vmFilter, vmType):
+    def __init__(self, subFilter, vmFilter, vmType, vmOS = None, vmOSVersion = None ):
         self.credentials = DefaultAzureCredential()
         self.subFilter = subFilter
         self.vmFilter = vmFilter
         self.vmType = vmType
+        self.vmOS = vmOS
+        self.vmOSVersion = vmOSVersion
         self.subscriptions = self.get_all_subscriptions()
         self.get_all_vms()
 
@@ -33,8 +37,19 @@ class AzureRunCommand:
             for vm in vmObjects:
                 addVm = True
 
+                ## Get OS details
+                # Not all storage profiles have image references
+                if vm.storage_profile.image_reference is None: 
+                    vmos = None
+                    vmosversion = None
+                else: 
+                    vmos = vm.storage_profile.image_reference.offer
+                    vmosversion = vm.storage_profile.image_reference.sku
+
+                vmtype = vm.storage_profile.os_disk.os_type
+
                 # Check OS type and add if it matches the list of OS types
-                if vm.storage_profile.os_disk.os_type not in self.vmType:
+                if vmtype not in self.vmType:
                     addVm = False
             
                 # Check if tag filter requirments are met
@@ -46,6 +61,17 @@ class AzureRunCommand:
                             elif value is not None:
                                 if vm.tags[key] != value:
                                     addVm = False
+                # Check OS Type
+                if vmos is not None:
+                    print(f"OS filter: {self.vmOS}")
+                    if vmos not in self.vmOS:
+                        addVm = False
+
+                # Check OS Version
+                if self.vmOSVersion is not None:
+                    if vmosversion not in self.vmOSVersion:
+                        addVm = False
+
                 if addVm:
                     totalVms += 1
                     print(".", end="")
@@ -54,21 +80,26 @@ class AzureRunCommand:
                         "resourceGroup": vm.id.split('/')[4],
                         "location": vm.location, 
                         "name": vm.name,
-                        "ostype": vm.storage_profile.os_disk.os_type, 
-                        "osversion": vm.storage_profile.image_reference.version,
+                        "os": vmtype,
+                        "ostype": vmos,
+                        "osversion": vmosversion,
                         "tags": vm.tags,
                         "licensed": None,
                         "kmsserver": None,
                         "kmsip": None,
+                        "kmsreachable": None,
                         "output": None,
-                        "error": None})                   
+                        "error": None})
+                else:
+                    print("x", end="")
         print("\r\n Total VMs Found: " + str(totalVms))
 
     def get_all_subscriptions(self):
         print("Getting all subscriptions")
-        credentials = DefaultAzureCredential()
-        subscription_client = SubscriptionClient(credentials)
-        subObjects = subscription_client.subscriptions.list()
+
+        # Python SDK has issues retreiving tags, using direct Graph query instead
+        azclioutput = json.loads(subprocess.check_output("az graph query -q \"resourcecontainers | where type == 'microsoft.resources/subscriptions' | project id, name, subscriptionId, properties.state, tags\"", shell=True).decode('utf-8'))
+        subObjects = list(azclioutput["data"])
         subscriptions = []
 
         for sub in subObjects:
@@ -77,14 +108,14 @@ class AzureRunCommand:
             if self.subFilter is not None:
                 for filter in self.subFilter:
                     for key, value in filter.items():
-                        if key not in sub.tags:
+                        if sub["tags"] is None or key not in sub["tags"]:
                             addSub = False
                         elif value is not None:
-                            if sub.tags[key] != value:
+                            if sub["tags"][key] != value:
                                 addSub = False
             if addSub:
-                print (".", end="")
-                subscriptions.append({"id": sub.subscription_id, "name": sub.display_name, "state": sub.state, "tags": sub.tags, "vm": []})
+                print (".", end="", flush=True)
+                subscriptions.append({"id": sub["subscriptionId"], "name": sub["name"], "state": sub["properties_state"], "tags": list(sub["tags"]), "vm": []})
         print("\r\nSubscriptions found: " + str(len(subscriptions)))
         return subscriptions
 
@@ -115,7 +146,7 @@ class AzureRunCommand:
                             'script': command,
                         }
                         poller = compute_client.virtual_machines.begin_run_command(vm["resourceGroup"], vm["name"], parameters) 
-                        print(".", end="")
+                        print(".", end="", flush=True)
                         result = poller.result()
                         vm["output"] = result.value[0].message
                         for value in result.value[0].message.split("\n"):
@@ -127,15 +158,18 @@ class AzureRunCommand:
                                     vm["kmsserver"] = temp[1].strip()
                                 elif temp[0].strip() == "KMS machine IP address":
                                     vm["kmsip"] = temp[1].strip()
+                                elif temp[0].strip() == "KMS_Reachable":
+                                    print("KMS Reachable Value Found")
+                                    vm["kmsreachable"] = temp[1].strip()
                     except Exception as e:
-                        print("X", end="")
+                        print("X", end="", flush=True)
 
     
     def export_csv(self, filename):
         # Export subscript,vm,output data to csv file
         # Write the header for the csv file
         csvfile = open(filename, 'w', newline='')
-        fieldnames = ['Subscription', 'ResourceGroup', 'Location', 'VM', 'OS', 'os version', 'Licensed', 'KMSServer', 'KMSIP', 'Output']
+        fieldnames = ['Subscription', 'ResourceGroup', 'Location', 'VM', 'OS', 'OS Type', 'OS Version', 'Licensed', 'KMSServer', 'KMSIP', 'KMS Reachable']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
@@ -147,11 +181,13 @@ class AzureRunCommand:
                     'ResourceGroup': vm["resourceGroup"],
                     'Location': vm["location"],
                     'VM': vm["name"],
-                    'OS': vm["ostype"],
-                    'os version': vm["osversion"],
+                    'OS': vm["os"],
+                    'OS Type': vm["ostype"],
+                    'OS Version': vm["osversion"],
                     'Licensed': vm["licensed"],
                     'KMSServer': vm["kmsserver"],
-                    'KMSIP': vm["kmsip"]})
+                    'KMSIP': vm["kmsip"],
+                    'KMS Reachable': vm["kmsreachable"]})
         csvfile.close()
         print("\r\nExported to CSV file: " + filename)
                     
@@ -159,15 +195,17 @@ class AzureRunCommand:
 
 
 # Create AzureSubscription object
-# Parameters: subFilter, vmFilter (Tag names), OS Type
-azacct = AzureRunCommand([{"Type":"Domain"}], [{"Supported":"Yes"}], ["Windows"])
+# Parameters: subFilter, vmFilter (Tag names), OS, OS Type, OS Version
+azacct = AzureRunCommand(None, None, ["Windows"], ["WindowsServer"])
 
 azacct.run_command(
     "Windows",
     [
         'cscript C:\windows\system32\slmgr.vbs /dlv | select-string -pattern "License Status"',
         'cscript C:\windows\system32\slmgr.vbs /dlv | select-string -pattern "Registered KMS machine name"',
-        'cscript C:\windows\system32\slmgr.vbs /dlv | select-string -pattern "KMS machine IP address"'
-        ])
+        'cscript C:\windows\system32\slmgr.vbs /dlv | select-string -pattern "KMS machine IP address"',
+        '$kms = cscript C:\windows\system32\slmgr.vbs /dlv | select-string -pattern "KMS Machine name:" | out-string -stream',
+        'write-host "KMS_Reachable:" (tnc -ComputerName $kms.split(":")[2].trim() -Port $kms.split(":")[3].trim() -InformationLevel detailed).TcpTestSucceeded'
+    ])
 
 azacct.export_csv("vmlist.csv")
