@@ -35,7 +35,12 @@ class AzureRunCommand:
             computeClient = ComputeManagementClient(credentials, sub["id"])
             vmObjects = computeClient.virtual_machines.list_all()
             for vm in vmObjects:
+                # Assume the VM is good to add by default then rule out reasons to not add it
                 addVm = True
+
+                # Get running status of VM
+                # .instance_view.statuses[1].display_status
+                vmState = computeClient.virtual_machines.get(vm.id.split('/')[4], vm.name, expand='instanceView').instance_view.statuses[1].display_status
 
                 ## Get OS details
                 # Not all storage profiles have image references
@@ -79,11 +84,14 @@ class AzureRunCommand:
                         "resourceGroup": vm.id.split('/')[4],
                         "location": vm.location, 
                         "name": vm.name,
+                        "state": vm.provisioning_state,
                         "os": vmtype,
                         "ostype": vmos,
                         "osversion": vmosversion,
                         "tags": vm.tags,
+                        "status": vmState,
                         "licensed": None,
+                        "domain": None,
                         "kmsserver": None,
                         "kmsip": None,
                         "kmsreachable": None,
@@ -138,36 +146,41 @@ class AzureRunCommand:
             for sub in self.subscriptions:
                 print("\r\nRunning Commands on VMs in Subscription: " + sub["name"])
                 for vm in sub["vm"]:
-                    try:
-                        compute_client = ComputeManagementClient(credential, sub["id"])
-                        parameters = {
-                            'command_id': 'RunPowerShellScript',
-                            'script': command,
-                        }
-                        poller = compute_client.virtual_machines.begin_run_command(vm["resourceGroup"], vm["name"], parameters) 
-                        print(".", end="", flush=True)
-                        result = poller.result()
-                        vm["output"] = result.value[0].message
-                        for value in result.value[0].message.split("\n"):
-                            if len(value) > 0:
-                                temp = value.split(":")
-                                if temp[0].strip() == "License Status":
-                                    vm["licensed"] = temp[1].strip()
-                                elif temp[0].strip() == "Registered KMS machine name":
-                                    vm["kmsserver"] = temp[1].strip()
-                                elif temp[0].strip() == "KMS machine IP address":
-                                    vm["kmsip"] = temp[1].strip()
-                                elif temp[0].strip() == "KMS_Reachable":
-                                    vm["kmsreachable"] = temp[1].strip()
-                    except Exception as e:
-                        print("X", end="", flush=True)
-
+                    if vm["status"] == "VM running":
+                        try:
+                            compute_client = ComputeManagementClient(credential, sub["id"])
+                            parameters = {
+                                'command_id': 'RunPowerShellScript',
+                                'script': command,
+                            }
+                            poller = compute_client.virtual_machines.begin_run_command(vm["resourceGroup"], vm["name"], parameters) 
+                            print(".", end="", flush=True)
+                            result = poller.result()
+                            vm["output"] = result.value[0].message
+                            for value in result.value[0].message.split("\n"):
+                                if len(value) > 0:
+                                    temp = value.split(":")
+                                    if temp[0].strip() == "License Status":
+                                        vm["licensed"] = temp[1].strip()
+                                    elif temp[0].strip() == "Registered KMS machine name":
+                                        vm["kmsserver"] = temp[1].strip()
+                                    elif temp[0].strip() == "KMS machine IP address":
+                                        vm["kmsip"] = temp[1].strip()
+                                    elif temp[0].strip() == "KMS_Reachable":
+                                        vm["kmsreachable"] = temp[1].strip()
+                                    elif temp[0].strip() == "Domain":
+                                        vm["domain"] = temp[1].strip()
+                        except Exception as e:
+                            print("X", end="", flush=True)
+                    else:
+                        vm["licensed"] = "VM not running"
+                        print("O", end="", flush=True)
     
     def export_csv(self, filename):
         # Export subscript,vm,output data to csv file
         # Write the header for the csv file
         csvfile = open(filename, 'w', newline='')
-        fieldnames = ['Subscription', 'ResourceGroup', 'Location', 'VM', 'OS', 'OS Type', 'OS Version', 'Licensed', 'KMSServer', 'KMSIP', 'KMS Reachable']
+        fieldnames = ['Subscription', 'ResourceGroup', 'Location', 'VM', 'OS', 'OS Type', 'OS Version', 'Status', 'Domain', 'Licensed', 'KMSServer', 'KMSIP', 'KMS Reachable']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
@@ -182,6 +195,8 @@ class AzureRunCommand:
                     'OS': vm["os"],
                     'OS Type': vm["ostype"],
                     'OS Version': vm["osversion"],
+                    'Status': vm["status"],
+                    'Domain': vm["domain"],
                     'Licensed': vm["licensed"],
                     'KMSServer': vm["kmsserver"],
                     'KMSIP': vm["kmsip"],
@@ -196,6 +211,8 @@ class AzureRunCommand:
 # Parameters: subFilter, vmFilter (Tag names), OS, OS Type, OS Version
 
 azacct = AzureRunCommand(None, None, ["Windows"], ["WindowsServer"])
+
+
 azacct.run_command(
     "Windows",
     [
@@ -203,7 +220,8 @@ azacct.run_command(
         'cscript C:\windows\system32\slmgr.vbs /dlv | select-string -pattern "Registered KMS machine name"',
         'cscript C:\windows\system32\slmgr.vbs /dlv | select-string -pattern "KMS machine IP address"',
         '$kms = cscript C:\windows\system32\slmgr.vbs /dlv | select-string -pattern "KMS Machine name:" | out-string -stream',
-        'write-host "KMS_Reachable:" (tnc -ComputerName $kms.split(":")[2].trim() -Port $kms.split(":")[3].trim() -InformationLevel detailed).TcpTestSucceeded'
+        'write-host "KMS_Reachable:" (tnc -ComputerName $kms.split(":")[2].trim() -Port $kms.split(":")[3].trim() -InformationLevel detailed).TcpTestSucceeded',
+        'systeminfo | findstr -i "domain"'
     ])
 
 azacct.export_csv("vmlist.csv")
