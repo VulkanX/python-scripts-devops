@@ -8,6 +8,7 @@ import csv
 import json
 import subprocess
 
+
 # Class to manage Azure Subscriptions and VMs
 class Azure:
 
@@ -81,14 +82,17 @@ class Azure:
                 if addVm:
                     # Get running status of VM if we are adding it
                     # .instance_view.statuses[1].display_status
-                    vmState = computeClient.virtual_machines.get(vm.id.split('/')[4], vm.name, expand='instanceView').instance_view.statuses[1].display_status
+                    vmState = computeClient.virtual_machines.get(
+                        vm.id.split('/')[4],
+                        vm.name,
+                        expand='instanceView').instance_view.statuses[1].display_status
 
                     totalVms += 1
                     print(".", end="", flush=True)
                     sub["vm"].append({
                         "id": vm.id,
                         "resourceGroup": vm.id.split('/')[4],
-                        "location": vm.location, 
+                        "location": vm.location,
                         "name": vm.name,
                         "state": vm.provisioning_state,
                         "os": vmtype,
@@ -110,8 +114,14 @@ class Azure:
     def get_all_subscriptions(self):
         print("Getting Subscriptions")
 
-        # Python SDK has issues retreiving tags consistently, using az cli Graph query instead to get all subscriptions
-        azclioutput = json.loads(subprocess.check_output("az graph query -q \"resourcecontainers | where type == 'microsoft.resources/subscriptions' | project id, name, subscriptionId, properties.state, tags\"", shell=True).decode('utf-8'))
+        # Python SDK has issues retreiving tags consistently
+        # using az cli Graph query instead to get all subscriptions
+        azclioutput = json.loads(
+            subprocess.check_output(
+              "az graph query -q \"resourcecontainers"
+              " | where type == 'microsoft.resources/subscriptions'"
+              " | project id, name, subscriptionId, properties.state, tags\"",
+              shell=True).decode('utf-8'))
         subObjects = list(azclioutput["data"])
         subscriptions = []
 
@@ -135,7 +145,12 @@ class Azure:
                 print("Adding Subscription: " + sub["name"])
                 if sub["tags"] is None:
                     sub["tags"] = {}
-                subscriptions.append({"id": sub["subscriptionId"], "name": sub["name"], "state": sub["properties_state"], "tags": list(sub["tags"]), "vm": []})
+                subscriptions.append({
+                    "id": sub["subscriptionId"],
+                    "name": sub["name"],
+                    "state": sub["properties_state"],
+                    "tags": list(sub["tags"]),
+                    "vm": []})
         print("\r\nSubscriptions found: " + str(len(subscriptions)))
         return subscriptions
 
@@ -145,7 +160,7 @@ class Azure:
         print(result)
 
     def run_command(self, os_type, command, vmid=None):
-        #check if Command is a list or not and make it a list
+        # check if Command is a list or not and make it a list
         if not isinstance(command, list):
             command = [command]
 
@@ -165,7 +180,10 @@ class Azure:
                                 'command_id': 'RunPowerShellScript',
                                 'script': command,
                             }
-                            poller = compute_client.virtual_machines.begin_run_command(vm["resourceGroup"], vm["name"], parameters) 
+                            poller = compute_client.virtual_machines.begin_run_command(
+                                vm["resourceGroup"],
+                                vm["name"],
+                                parameters)
                             print(".", end="", flush=True)
                             result = poller.result()
                             vm["output"] = result.value[0].message
@@ -193,13 +211,33 @@ class Azure:
         # Export subscript,vm,output data to csv file
         # Write the header for the csv file
         csvfile = open(filename, 'w', newline='')
-        fieldnames = ['Subscription', 'ResourceGroup', 'Location', 'VM', 'OS', 'OS Type', 'OS Version', 'CloudReachSupport', 'Status', 'Domain', 'Licensed', 'KMSServer', 'KMSIP', 'KMS Reachable']
+        fieldnames = [
+            'Subscription',
+            'ResourceGroup',
+            'Location',
+            'VM',
+            'OS',
+            'OS Type',
+            'OS Version',
+            'CloudReachSupport',
+            'Status',
+            'Domain',
+            'Licensed',
+            'KMSServer',
+            'KMSIP',
+            'KMS Reachable']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
         # Loop through all subs and VMs and export to CSV
         for sub in self.subscriptions:
             for vm in sub["vm"]:
+                # Check for CR Support Tag
+                if 'CloudreachSupport' in vm["tags"]:
+                    cr_support = vm["tags"]['CloudreachSupport']
+                else:
+                    cr_support = ''
+
                 writer.writerow({
                     'Subscription': sub["name"],
                     'ResourceGroup': vm["resourceGroup"],
@@ -208,7 +246,7 @@ class Azure:
                     'OS': vm["os"],
                     'OS Type': vm["ostype"],
                     'OS Version': vm["osversion"],
-                    'CloudReachSupport': vm["tags"]['CloudreachSupport'] if 'CloudreachSupport' in vm["tags"] else '',
+                    'CloudReachSupport': cr_support,
                     'Status': vm["status"],
                     'Domain': vm["domain"],
                     'Licensed': vm["licensed"],

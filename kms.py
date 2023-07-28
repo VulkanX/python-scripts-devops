@@ -2,7 +2,7 @@ from AzureLib import Azure
 import json
 import sys
 
-# ConfigFile 
+# ConfigFile
 
 # Get Config from CLI Args
 if len(sys.argv) > 1 and sys.argv[1].strip().lower() != "none":
@@ -40,33 +40,42 @@ with open(config_file, 'r') as stream:
     config = json.load(stream)
 
 # If subscriptions text file was specified, load it
-if subscription_file != None:
+if subscription_file is not None:
     with open(subscription_file, 'r') as stream:
         data = stream.read().splitlines()
         config["subscriptionFilter"]["Name"] = data
 
 # If server list text file was specified, load it
-if server_list_file != None:
+if server_list_file is not None:
     with open(server_list_file, 'r') as stream:
         data = stream.read().splitlines()
         config["vmFilter"]["Name"] = data
-        
+
 
 kms_check = [
     'cscript C:\\windows\\system32\\slmgr.vbs /dlv | select-string -pattern "License Status"',
-    'cscript C:\\windows\\system32\\slmgr.vbs /dlv | select-string -pattern "Registered KMS machine name"',
-    'cscript C:\\windows\\system32\\slmgr.vbs /dlv | select-string -pattern "KMS machine IP address"',
-    '$kms = cscript C:\\windows\\system32\\slmgr.vbs /dlv | select-string -pattern "KMS Machine name:" | out-string -stream',
-    'write-host "KMS_Reachable:" (tnc -ComputerName $kms.split(":")[2].trim() -Port $kms.split(":")[3].trim() -InformationLevel detailed).TcpTestSucceeded',
+    ('cscript C:\\windows\\system32\\slmgr.vbs /dlv'
+        ' | select-string -pattern "Registered KMS machine name"'),
+    ('cscript C:\\windows\\system32\\slmgr.vbs /dlv'
+        ' | select-string -pattern "KMS machine IP address"'),
+    ('$kms = cscript C:\\windows\\system32\\slmgr.vbs /dlv'
+        ' | select-string -pattern "KMS Machine name:" | out-string -stream'),
+    ('write-host "KMS_Reachable:" '
+        '(tnc -ComputerName $kms.split(":")[2].trim() '
+        '-Port $kms.split(":")[3].trim() -InformationLevel detailed).TcpTestSucceeded'),
     'systeminfo | findstr -i "domain"'
 ]
 
 kms_fix = [
     'cscript C:\\windows\\system32\\slmgr.vbs /ckms',
-    'cscript C:\\windows\\system32\\slmgr.vbs /ato | select-string -pattern "Registered KMS machine name"',
-    'cscript C:\\windows\\system32\\slmgr.vbs /dlv | select-string -pattern "License Status"',
-    'cscript C:\\windows\\system32\\slmgr.vbs /dlv | select-string -pattern "Registered KMS machine name"',
-    'cscript C:\\windows\\system32\\slmgr.vbs /dlv | select-string -pattern "KMS machine IP address"'
+    ('cscript C:\\windows\\system32\\slmgr.vbs /ato'
+        ' | select-string -pattern "Registered KMS machine name"'),
+    ('cscript C:\\windows\\system32\\slmgr.vbs /dlv'
+        ' | select-string -pattern "License Status"'),
+    ('cscript C:\\windows\\system32\\slmgr.vbs /dlv'
+        ' | select-string -pattern "Registered KMS machine name"'),
+    ('cscript C:\\windows\\system32\\slmgr.vbs /dlv'
+        ' | select-string -pattern "KMS machine IP address"')
 ]
 
 az = Azure(config["subscriptionFilter"], config["vmFilter"], config["osFilter"], config["osType"])
@@ -80,5 +89,5 @@ elif kms_command == "fix":
 
 print(str(az), "\n")
 
-if csv_filename != None:
+if csv_filename is not None:
     az.export_csv(csv_filename)
