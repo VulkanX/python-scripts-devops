@@ -1,0 +1,16 @@
+{
+    "subscriptionFilter": {
+        "Name": [],
+        "Tags":{
+            "SubscriptionType": "DatacenterExtension"
+        }
+    },
+    "vmFilter": {
+        "Name": [],
+        "Tags": {
+            "Support": "Yes"
+        }
+    },
+    "osFilter": ["Windows"],
+    "osType": ["WindowsServer"]
+}

@@ -29,7 +29,7 @@ class Azure:
         return return_string
 
     def get_all_vms(self):
-        print("Getting VMs for all subscriptions")
+        print("Getting VMs for subscriptions")
         credentials = DefaultAzureCredential()
         totalVms = 0
         for sub in self.subscriptions:
@@ -38,10 +38,6 @@ class Azure:
             for vm in vmObjects:
                 # Assume the VM is good to add by default then rule out reasons to not add it
                 addVm = True
-
-                # Get running status of VM
-                # .instance_view.statuses[1].display_status
-                vmState = computeClient.virtual_machines.get(vm.id.split('/')[4], vm.name, expand='instanceView').instance_view.statuses[1].display_status
 
                 # Get OS details
                 # Not all storage profiles have image references
@@ -83,6 +79,10 @@ class Azure:
                         addVm = False
 
                 if addVm:
+                    # Get running status of VM if we are adding it
+                    # .instance_view.statuses[1].display_status
+                    vmState = computeClient.virtual_machines.get(vm.id.split('/')[4], vm.name, expand='instanceView').instance_view.statuses[1].display_status
+
                     totalVms += 1
                     print(".", end="", flush=True)
                     sub["vm"].append({
@@ -108,7 +108,7 @@ class Azure:
         print("\r\n Total VMs Found: " + str(totalVms))
 
     def get_all_subscriptions(self):
-        print("Getting all subscriptions")
+        print("Getting Subscriptions")
 
         # Python SDK has issues retreiving tags consistently, using az cli Graph query instead to get all subscriptions
         azclioutput = json.loads(subprocess.check_output("az graph query -q \"resourcecontainers | where type == 'microsoft.resources/subscriptions' | project id, name, subscriptionId, properties.state, tags\"", shell=True).decode('utf-8'))
@@ -126,7 +126,7 @@ class Azure:
                         if sub["tags"][key] != value:
                             addSub = False
             # Check Name Filter
-            if "Name" in self.subFilter:
+            if "Name" in self.subFilter and len(self.subFilter["Name"]) > 0:
                 if sub["name"] not in self.subFilter["Name"]:
                     addSub = False
 
